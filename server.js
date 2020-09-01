@@ -2,9 +2,12 @@ const express = require('express');
 require("dotenv").config();
 const cors = require("cors");
 const superagent = require('superagent');
+const pg = require('pg');
 
 const server = express();
 const PORT = process.env.PORT || 3000;
+const client = new pg.Client(process.env.DATABASE_URL);
+
 
 server.use(cors())
 
@@ -18,10 +21,50 @@ server.get('/trails', trailHandler);
 server.use('*', notFoundHandler);
 server.use(errorHandler);
 
-function locationHandler(request, response){
+function checkDB(city){
+    let SQL = `SELECT * FROM locations WHERE search_query=$1;`;
+    let values = [city];
+
+    return client.query(SQL, values)
+    .then(results =>{
+        if(results.rows.length == 0){
+            console.log("Checking | API allowed");
+            return true;
+        } else {
+        console.log("Checking | API not allowed")
+        // console.log(results.rows);
+        return results.rows;}
+    })
+}
+
+function saveLocDB(data){
+    let SQL = `INSERT INTO locations (search_query,formatted_query,latitude,longitude) VALUES ($1,$2,$3,$4);`;
+    let values = [data.search_query, data.formatted_query, data.latitude, data.longitude,];
+    return client.query(SQL, values)
+    .then((result) => {
+        return data;
+    })
+    .catch((err) =>{
+        console.log("Error", err);
+    });
+}
+    
+
+async function locationHandler (request, response){
     const city = request.query.city;
-    getLocation(city)
-    .then(locationData => response.status(200).json(locationData)); 
+    let API_allowed = await checkDB(city);
+    // console.log(testCheck);
+    if(API_allowed === true){
+    // console.log("API true+");
+    await getLocation(city).then((data) =>{
+        saveLocDB(data).then((sData) =>{
+        response.status(200).json(sData);
+        });
+    });
+    }else{
+        delete API_allowed[0].id;
+        response.status(200).json(API_allowed[0]);
+    }
 }
 
 function getLocation(city){
@@ -32,6 +75,7 @@ function getLocation(city){
     .then(data =>{
         cordinate = [];
         const location = new Location(city, data.body);
+        console.log(location);
         return location;
     })
 }
@@ -132,6 +176,9 @@ function errorHandler(error, request, response) {
     response.status(500).send(error);
   }
 
-server.listen (PORT,()=>{
-    console.log(`listening to PORT ${PORT}`);
-})
+  client.connect()
+  .then(()=>{
+      server.listen(PORT, () =>
+      console.log(`listening on ${PORT}`)
+      );
+  })
